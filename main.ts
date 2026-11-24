@@ -21,6 +21,9 @@ function fail(message: string): never {
 // limit before anything is copied. A bad file must stop the run here,
 // not land in the output directory.
 function validateEntry(bytes: Buffer): void {
+  if (bytes.length < MAGIC.length) {
+    fail("file is too short to be a PNG (" + bytes.length + " bytes)");
+  }
   for (let i = 0; i < MAGIC.length; i++) {
     if (bytes[i] !== MAGIC[i]) {
       fail(
@@ -61,4 +64,8 @@ validateEntry(image);
 
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, "entry.png"), image);
-console.log("entry.png written to " + outDir);
+console.log(
+  `entry.png (${EXPECTED.width}x${EXPECTED.height}, ` +
+    `${image.length} bytes) written to ` +
+    outDir,
+);
