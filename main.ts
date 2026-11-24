@@ -1,71 +1,75 @@
-// News Image entry for Tuesday, 24 November 2026.
-// Takes the finished front page (entry.png, kept next to this file),
-// checks it is really the image the bounty asks for, and places a
-// copy in the output directory the harness reads from.
+// Front page for the News Image entry of Tuesday 24 November 2026.
+//
+// The finished page lives next to this script as entry.png. This
+// script's only job is to prove that image is the one the bounty
+// asks for, then leave a copy in the directory the harness reads.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// What the bounty requires of the image.
-const EXPECTED = { width: 1024, height: 1024, maxBytes: 1024 * 1024 };
+// The bounty wants a square front page, 1024 pixels on each side,
+// stored as a PNG smaller than one mebibyte.
+const SIDE_PX = 1024;
+const SIZE_LIMIT = 1024 * 1024;
 
-// The first eight bytes of every PNG file, in order.
-const MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+// Every PNG file opens with these eight bytes.
+const PNG_MARK = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-function fail(message: string): never {
-  throw new Error("entry.png failed validation: " + message);
+// Where this script lives, and where the finished image must go.
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const TARGET_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+const SOURCE_FILE = join(SCRIPT_DIR, "entry.png");
+const TARGET_FILE = join(TARGET_DIR, "entry.png");
+
+function reject(detail: string): never {
+  throw new Error("entry.png rejected: " + detail);
 }
 
-// Read the image and make sure it is a 1024x1024 PNG under the 1 MiB
-// limit before anything is copied. A bad file must stop the run here,
-// not land in the output directory.
-function validateEntry(bytes: Buffer): void {
-  if (bytes.length < MAGIC.length) {
-    fail("file is too short to be a PNG (" + bytes.length + " bytes)");
+function checkSignature(data: Buffer): void {
+  if (data.length < PNG_MARK.length) {
+    reject(`only ${data.length} bytes long, too short for a PNG`);
   }
-  for (let i = 0; i < MAGIC.length; i++) {
-    if (bytes[i] !== MAGIC[i]) {
-      fail(
-        "not a PNG file (first bytes are " +
-          bytes.subarray(0, 8).toString("hex") +
-          ", expected 89504e470d0a1a0a)",
+  for (const [offset, expected] of PNG_MARK.entries()) {
+    if (data[offset] !== expected) {
+      reject(
+        "opening bytes are " +
+          data.subarray(0, PNG_MARK.length).toString("hex") +
+          ", not a PNG signature",
       );
     }
   }
+}
 
-  // Width and height live in the IHDR chunk: bytes 16-19 and 20-23,
-  // each a big-endian 32-bit integer.
-  if (bytes.length < 24 || bytes.toString("ascii", 12, 16) !== "IHDR") {
-    fail("missing the IHDR chunk a PNG must start with");
+function checkDimensions(data: Buffer): void {
+  // The IHDR chunk starts at byte 8: four bytes of length, four of
+  // the letters IHDR, then width and height as big-endian words.
+  if (data.length < 24 || data.toString("ascii", 12, 16) !== "IHDR") {
+    reject("no IHDR chunk at the start of the file");
   }
-  const width = bytes.readUInt32BE(16);
-  const height = bytes.readUInt32BE(20);
-  if (width !== EXPECTED.width || height !== EXPECTED.height) {
-    fail(
-      `is ${width}x${height}, expected ` +
-        `${EXPECTED.width}x${EXPECTED.height}`,
-    );
+  const wide = data.readUInt32BE(16);
+  const tall = data.readUInt32BE(20);
+  if (wide !== SIDE_PX || tall !== SIDE_PX) {
+    reject(`measures ${wide}x${tall}, wanted ${SIDE_PX}x${SIDE_PX}`);
   }
-
-  if (bytes.length > EXPECTED.maxBytes) {
-    fail(
-      `is ${bytes.length} bytes, over the ` +
-        `${EXPECTED.maxBytes} byte limit`,
-    );
+  if (data.length > SIZE_LIMIT) {
+    reject(`weighs ${data.length} bytes, over the ${SIZE_LIMIT} byte ceiling`);
   }
 }
 
-const here = dirname(fileURLToPath(import.meta.url));
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+const page = readFileSync(SOURCE_FILE);
+checkSignature(page);
+checkDimensions(page);
 
-const image = readFileSync(join(here, "entry.png"));
-validateEntry(image);
+mkdirSync(TARGET_DIR, { recursive: true });
+copyFileSync(SOURCE_FILE, TARGET_FILE);
 
-mkdirSync(outDir, { recursive: true });
-writeFileSync(join(outDir, "entry.png"), image);
+// Make sure the copy that landed is the whole image, not a
+// truncated write, before calling the run a success.
+if (statSync(TARGET_FILE).size !== page.length) {
+  reject("the copy in the output directory came out the wrong size");
+}
 console.log(
-  `entry.png (${EXPECTED.width}x${EXPECTED.height}, ` +
-    `${image.length} bytes) written to ` +
-    outDir,
+  `front page (${SIDE_PX}x${SIDE_PX}, ${page.length} bytes) ` +
+    `copied to ${TARGET_DIR}`,
 );
